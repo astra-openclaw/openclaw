@@ -80,6 +80,7 @@ export interface ReadToolInput {
   path: string;
   offset?: number;
   limit?: number;
+  optional?: true;
 }
 
 export type ReadToolTruncationDetails = Omit<TruncationResult, "content">;

@@ -10,7 +10,7 @@ import { formatByteSize } from "@openclaw/normalization-core";
 import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { isWindowsDrivePath } from "../infra/archive-path.js";
-import { isMissingPathError, toErrorObject } from "../infra/errors.js";
+import { toErrorObject } from "../infra/errors.js";
 import {
   canonicalPathFromExistingAncestor,
   root as fsRoot,
@@ -105,8 +105,6 @@ type ReadTruncationDetails = {
 
 const READ_CONTINUATION_NOTICE_RE =
   /\n\n\[(?:Showing lines [^\]]*?Use offset=\d+ to continue\.|\d+ more lines in file\. Use offset=\d+ to continue\.)\]\s*$/;
-const DAILY_MEMORY_PATH_RE = /^memory\/\d{4}-\d{2}-\d{2}\.md$/;
-
 function resolveAdaptiveReadMaxBytes(options?: OpenClawReadToolOptions): number {
   const contextWindowTokens = options?.modelContextWindowTokens;
   if (
@@ -253,59 +251,13 @@ function stripReadTruncationContentDetails(
   };
 }
 
-function missingDailyMemoryReadResult(relativePath: string): AgentToolResult<unknown> {
-  return {
-    content: [
-      {
-        type: "text",
-        text: `No daily memory file exists yet at ${relativePath}.`,
-      },
-    ],
-    details: {
-      status: "not_found",
-      path: relativePath,
-      optional: true,
-    },
-  };
-}
-
-function normalizeDailyMemoryReadPath(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const normalized = value
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.\/+/, "");
-  return DAILY_MEMORY_PATH_RE.test(normalized) ? normalized : undefined;
-}
-
-function isNotFoundError(error: unknown): boolean {
-  if (isMissingPathError(error)) {
-    return true;
-  }
-  // Injected tool implementations may expose only their legacy human-readable error.
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return /\bENOENT\b|no such file or directory|file not found/i.test(error.message);
-}
-
 async function executeReadPage(params: {
   base: AnyAgentTool;
   toolCallId: string;
   args: Record<string, unknown>;
   signal?: AbortSignal;
 }): Promise<AgentToolResult<unknown>> {
-  try {
-    return await params.base.execute(params.toolCallId, params.args, params.signal);
-  } catch (error) {
-    const missingDailyMemoryPath = normalizeDailyMemoryReadPath(params.args.path);
-    if (missingDailyMemoryPath && isNotFoundError(error)) {
-      return missingDailyMemoryReadResult(missingDailyMemoryPath);
-    }
-    throw error;
-  }
+  return await params.base.execute(params.toolCallId, params.args, params.signal);
 }
 
 async function executeReadWithAdaptivePaging(params: {
