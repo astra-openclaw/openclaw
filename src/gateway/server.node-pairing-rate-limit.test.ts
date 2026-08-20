@@ -3,8 +3,8 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
-import { WebSocket } from "ws";
+import { describe, expect, test, vi } from "vitest";
+import { WebSocket, WebSocketServer } from "ws";
 import { ConnectErrorDetailCodes } from "../../packages/gateway-protocol/src/connect-error-details.js";
 import {
   loadOrCreateDeviceIdentity,
@@ -18,6 +18,11 @@ import {
 } from "../infra/device-pairing-node.js";
 import { requestDevicePairing } from "../infra/device-pairing.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
+import { prepareGatewayIngressAttribution } from "./ingress-attribution.js";
+import { NodeRegistry } from "./node-registry.js";
+import { createPreauthConnectionBudget } from "./server/preauth-connection-budget.js";
+import { attachGatewayWsConnectionHandler } from "./server/ws-connection.js";
+import { createGatewayWsTestLogger } from "./server/ws-connection.test-helpers.js";
 import {
   connectReq,
   installGatewayTestHooks,
@@ -100,6 +105,68 @@ async function approveNodeIdentity(params: { identityPath: string; caps: string[
 }
 
 describe("node pairing rate limit", () => {
+  test("admits an authenticated paired node while Gateway startup is pending", async () => {
+    const identityPath = path.join(os.tmpdir(), `openclaw-node-startup-${randomUUID()}.sqlite`);
+    const identity = await approveNodeIdentity({ identityPath, caps: [] });
+    const nodeRegistry = new NodeRegistry();
+    const requestContext = {
+      unsubscribeAllSessionEvents: vi.fn(),
+      nodeRegistry,
+      nodeUnsubscribeAll: vi.fn(),
+      broadcast: vi.fn(),
+    };
+    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    wss.on("connection", (_socket, req) => prepareGatewayIngressAttribution({ req }));
+    attachGatewayWsConnectionHandler({
+      wss,
+      clients: new Set(),
+      preauthConnectionBudget: createPreauthConnectionBudget(8),
+      port: 0,
+      getResolvedAuth: () => ({ mode: "token", allowTailscale: false, token: "secret" }),
+      preauthHandshakeTimeoutMs: 5_000,
+      isStartupPending: () => true,
+      gatewayMethods: [],
+      events: [],
+      refreshHealthSnapshot: vi.fn(async () => ({}) as never),
+      logGateway: createGatewayWsTestLogger() as never,
+      logHealth: createGatewayWsTestLogger() as never,
+      logWsControl: createGatewayWsTestLogger() as never,
+      extraHandlers: {},
+      broadcast: vi.fn(),
+      buildRequestContext: () => requestContext as never,
+    });
+    await new Promise<void>((resolve) => {
+      wss.once("listening", resolve);
+    });
+    const address = wss.address();
+    if (!address || typeof address === "string") {
+      throw new Error("node startup test server did not bind a TCP port");
+    }
+    let ws: WebSocket | undefined;
+    try {
+      ws = await openWs(address.port);
+      const response = await connectReq(ws, {
+        token: "secret",
+        role: "node",
+        scopes: [],
+        client: NODE_CLIENT,
+        deviceIdentityPath: identityPath,
+        prePairDevice: false,
+      });
+      expect(response.ok, JSON.stringify(response)).toBe(true);
+      expect(response.payload).toMatchObject({ type: "hello-ok", auth: { role: "node" } });
+      expect(nodeRegistry.get(identity.deviceId)).toMatchObject({ nodeId: identity.deviceId });
+    } finally {
+      ws?.close();
+      for (const client of wss.clients) {
+        client.terminate();
+      }
+      await new Promise<void>((resolve, reject) => {
+        wss.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   test("limits concurrent first-time node pairing requests before the pairing lock", async () => {
     testState.gatewayAuth = {
       mode: "token",

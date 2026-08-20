@@ -117,7 +117,12 @@ export async function admitGatewayConnect(context: GatewayConnectPhaseContext) {
     sendFrame,
   } = context;
 
-  if (isStartupPending?.()) {
+  // Node enrollment is an awaited startup dependency: authenticated node admission
+  // must complete while ordinary methods and other clients remain startup-gated.
+  if (
+    isStartupPending?.() &&
+    (connectParams.role !== "node" || connectParams.client.mode !== GATEWAY_CLIENT_MODES.NODE)
+  ) {
     markHandshakeFailure(GATEWAY_STARTUP_PENDING_CLOSE_CAUSE);
     await sendFrame({
       type: "res",
