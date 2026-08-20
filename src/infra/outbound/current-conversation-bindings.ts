@@ -195,15 +195,12 @@ function loadBindingsIntoMemory(): void {
   currentConversationBindingsState.loaded = true;
 }
 
-function resolveChannelSupportsCurrentConversationBinding(params: {
-  channel: string;
-  accountId: string;
-}): boolean {
+function resolveChannelConversationBindingSupport(params: { channel: string; accountId: string }) {
   const normalized =
     normalizeAnyChannelId(params.channel) ??
     normalizeOptionalLowercaseString(normalizeConversationText(params.channel));
   if (!normalized) {
-    return false;
+    return undefined;
   }
   const matchesPluginId = (plugin: {
     id?: string | null;
@@ -219,13 +216,30 @@ function resolveChannelSupportsCurrentConversationBinding(params: {
   const plugin = (getActivePluginChannelRegistryFromState()?.channels ?? []).find((entry) =>
     matchesPluginId(entry.plugin),
   )?.plugin;
-  const bindingSupport = plugin?.conversationBindings;
-  if (bindingSupport?.supportsCurrentConversationBinding !== true) {
+  return plugin?.conversationBindings;
+}
+
+function resolveChannelSupportsCurrentConversationBinding(params: {
+  channel: string;
+  accountId: string;
+}): boolean {
+  const bindingSupport = resolveChannelConversationBindingSupport(params);
+  if (
+    bindingSupport?.supportsCurrentConversationBinding !== true ||
+    bindingSupport.bindingStore === "adapter"
+  ) {
     return false;
   }
   return (
     bindingSupport.isCurrentConversationBindingSupported?.({ accountId: params.accountId }) ?? true
   );
+}
+
+export function requiresRegisteredSessionBindingAdapter(params: {
+  channel: string;
+  accountId: string;
+}): boolean {
+  return resolveChannelConversationBindingSupport(params)?.bindingStore === "adapter";
 }
 
 function supportsGenericCurrentConversationBinding(ref: {
