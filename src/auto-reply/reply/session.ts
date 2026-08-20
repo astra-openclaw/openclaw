@@ -9,6 +9,7 @@ import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { clearBootstrapSnapshotOnSessionBoundary } from "../../agents/bootstrap-cache.js";
 import { clearAllCliSessions, getCliSessionBinding } from "../../agents/cli-session.js";
 import { resetRegisteredAgentHarnessSessions } from "../../agents/harness/registry.js";
+import { readSessionThinkingLevelSelection } from "../../agents/session-thinking-level-selection.js";
 import { cleanupBrowserSessionsForLifecycleEnd } from "../../browser-lifecycle-cleanup.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { conversationRouteContextFromMsgContext } from "../../config/sessions/conversation-route-context.js";
@@ -386,10 +387,12 @@ function selectSessionModelOverride(
   };
 }
 
-function resolveReplySessionRolloverState(entry: SessionEntry): Partial<SessionEntry> {
+function resolveReplySessionRolloverState(entry: SessionEntry): Partial<InternalSessionEntry> {
   const preservedSelection = resolveResetPreservedSelection({ entry });
+  const thinkingLevelSelection = readSessionThinkingLevelSelection(entry);
   return {
     thinkingLevel: entry.thinkingLevel,
+    ...(thinkingLevelSelection ? { thinkingLevelSelection: { ...thinkingLevelSelection } } : {}),
     verboseLevel: entry.verboseLevel,
     traceLevel: entry.traceLevel,
     reasoningLevel: entry.reasoningLevel,

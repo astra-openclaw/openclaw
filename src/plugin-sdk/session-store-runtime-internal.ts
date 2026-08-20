@@ -89,6 +89,9 @@ export function generationValidPrivateFieldsForSameSession(
           mainRestartRecovery: existingEntry.mainRestartRecovery,
         }
       : {}),
+    ...(existingEntry.thinkingLevelSelection
+      ? { thinkingLevelSelection: { ...existingEntry.thinkingLevelSelection } }
+      : {}),
   };
   return Object.keys(state).length > 0 ? state : undefined;
 }
