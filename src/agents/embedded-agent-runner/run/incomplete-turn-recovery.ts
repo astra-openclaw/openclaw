@@ -325,7 +325,7 @@ export function resolveSettledToolTerminalContinuationInstruction(params: {
     ((params.timedOut || params.attempt.terminal.kind === "timeout") && !idlePromptTimeout) ||
     (terminal.kind === "failed" && !params.attempt.settledTurnFinalizationContext) ||
     (assistant?.stopReason === "toolUse" ? !allToolsProvenSettled : !emptyStopAfterSettledTools) ||
-    hasIntentionalTerminalToolBatch ||
+    (hasIntentionalTerminalToolBatch && !hasSettledTerminalToolFailure) ||
     hasUnsettledToolError ||
     hasAsyncActivity(params.attempt.toolMetas) ||
     hasAcceptedSessionSpawn(params.attempt.acceptedSessionSpawns) ||

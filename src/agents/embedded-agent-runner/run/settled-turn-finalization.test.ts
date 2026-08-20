@@ -22,15 +22,18 @@ vi.mock("./backend.js", () => ({
 function settledFailedAttempt(): EmbeddedRunAttemptWithReceiptEvidence {
   const assistant = buildEmbeddedRunnerAssistant({
     stopReason: "toolUse",
-    content: [
-      { type: "toolCall", id: "tool-read", name: "read", arguments: {} },
-      { type: "toolCall", id: "tool-exec", name: "exec", arguments: {} },
-    ],
+    content: [{ type: "toolCall", id: "tool-exec", name: "exec", arguments: {} }],
   });
   const messagesSnapshot = [
+    { role: "user", content: [{ type: "text", text: "finish the task" }] },
     assistant,
-    { role: "toolResult", toolCallId: "tool-read", toolName: "read", isError: false },
-    { role: "toolResult", toolCallId: "tool-exec", toolName: "exec", isError: true },
+    {
+      role: "toolResult",
+      toolCallId: "tool-exec",
+      toolName: "exec",
+      isError: true,
+      content: [{ type: "text", text: "bridge dispatch failed" }],
+    },
   ] as never;
   const attempt = makeEmbeddedRunnerAttempt({
     terminal: {
@@ -42,8 +45,13 @@ function settledFailedAttempt(): EmbeddedRunAttemptWithReceiptEvidence {
     sessionFileUsed: "/tmp/session-settled.jsonl",
     assistantTexts: [],
     toolMetas: [
-      { toolName: "read", isError: false, replaySafe: true },
-      { toolName: "exec", isError: true, replaySafe: false },
+      {
+        toolName: "exec",
+        toolCallId: "tool-exec",
+        isError: true,
+        replaySafe: false,
+        terminate: true,
+      },
     ],
     successfulCronAdds: 1,
     latestMcpAppChannelView: { viewId: "view-after-tools" },
@@ -133,7 +141,7 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
     backendMocks.runSettledFinalization.mockReset();
   });
 
-  it("replaces a settled failed-tool warning with failure-honest final output", async () => {
+  it("finalizes a settled failed terminal tool batch with failure-honest output", async () => {
     const attempt = settledFailedAttempt();
     const finalAssistant = buildEmbeddedRunnerAssistant({
       content: [{ type: "text", text: "The exec tool failed: post-processing error." }],
@@ -160,6 +168,20 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
       initialReplayState: { replayInvalid: false, hadPotentialSideEffects: false },
     });
     expect(settledAttempt).toBe(attempt);
+    expect(settledAttempt.messagesSnapshot).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: [{ type: "text", text: "finish the task" }],
+      }),
+      expect.objectContaining({ role: "assistant" }),
+      expect.objectContaining({
+        role: "toolResult",
+        toolCallId: "tool-exec",
+        toolName: "exec",
+        isError: true,
+        content: [{ type: "text", text: "bridge dispatch failed" }],
+      }),
+    ]);
     expect(result.finalizationOutcome).toBe("answered");
     expect(result.prepared.payloadsWithToolMedia).toEqual([
       expect.objectContaining({ text: "The exec tool failed: post-processing error." }),

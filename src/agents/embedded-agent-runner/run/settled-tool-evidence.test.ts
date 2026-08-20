@@ -172,6 +172,73 @@ describe("runEmbeddedAgent incomplete-turn safety", () => {
     expect(instruction).toBeNull();
   });
 
+  it.each(["exec", "wait"])(
+    "suppresses continuation after an exactly matched successful terminal %s call",
+    (toolName) => {
+      const toolUseAssistant = makeLastAssistant({
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "tool_1", name: toolName, arguments: {} }],
+      });
+      const instruction = resolveSettledToolTerminalContinuationInstruction(
+        makeSettledContinuationParams({
+          assistantTexts: [],
+          toolMetas: [
+            {
+              toolName,
+              toolCallId: "tool_1",
+              replaySafe: false,
+              terminate: true,
+            },
+          ],
+          itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
+          messagesSnapshot: [
+            toolUseAssistant,
+            { role: "toolResult", toolCallId: "tool_1", toolName, isError: false },
+          ] as unknown as EmbeddedRunAttemptResult["messagesSnapshot"],
+          lastAssistant: toolUseAssistant,
+          currentAttemptAssistant: toolUseAssistant,
+        }),
+      );
+
+      expect(instruction).toBeNull();
+    },
+  );
+
+  it.each(["exec", "wait"])(
+    "continues after an exactly matched failed terminal %s call",
+    (toolName) => {
+      const toolUseAssistant = makeLastAssistant({
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "tool_1", name: toolName, arguments: {} }],
+      });
+      const instruction = resolveSettledToolTerminalContinuationInstruction(
+        makeSettledContinuationParams({
+          assistantTexts: [],
+          toolMetas: [
+            {
+              toolName,
+              toolCallId: "tool_1",
+              isError: true,
+              replaySafe: false,
+              terminate: true,
+            },
+          ],
+          itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
+          messagesSnapshot: [
+            toolUseAssistant,
+            { role: "toolResult", toolCallId: "tool_1", toolName, isError: true },
+          ] as unknown as EmbeddedRunAttemptResult["messagesSnapshot"],
+          lastAssistant: toolUseAssistant,
+          currentAttemptAssistant: toolUseAssistant,
+          lastToolError: { toolName, error: "bridge failure" },
+        }),
+      );
+
+      expect(instruction).toContain(SETTLED_TOOL_TERMINAL_CONTINUATION_INSTRUCTION);
+      expect(instruction).toContain("If a tool failed, say so; never claim completion or success.");
+    },
+  );
+
   it("continues when terminal metadata belongs to a stale prior call", () => {
     const attempt = makeSettledIdleWriteAttempt();
     const instruction = resolveSettledToolTerminalContinuationInstruction(
@@ -485,7 +552,19 @@ describe("runEmbeddedAgent incomplete-turn safety", () => {
   it.each([
     {
       label: "an async tool is still running",
-      attemptOverrides: { toolMetas: [{ toolName: "exec", isError: true, asyncStarted: true }] },
+      attemptOverrides: {
+        toolMetas: [
+          {
+            toolName: "exec",
+            toolCallId: "tool_1",
+            isError: true,
+            replaySafe: false,
+            terminate: true,
+            asyncStarted: true,
+          },
+        ],
+      },
+      continuationOverrides: {},
     },
     {
       label: "an accepted child session owns the response",
@@ -494,42 +573,82 @@ describe("runEmbeddedAgent incomplete-turn safety", () => {
           { runId: "run-child", childSessionKey: "agent:main:subagent:child" },
         ],
       },
+      continuationOverrides: {},
     },
     {
       label: "a client tool remains pending",
       attemptOverrides: { clientToolCalls: [{ name: "pending", params: {} }] },
+      continuationOverrides: {},
     },
     {
       label: "the turn yielded",
       attemptOverrides: { yieldDetected: true },
+      continuationOverrides: {},
     },
     {
       label: "an approval prompt was already delivered",
       attemptOverrides: { didSendDeterministicApprovalPrompt: true },
+      continuationOverrides: {},
     },
-  ])("does not finalize a failed terminal tool when $label (#118274)", ({ attemptOverrides }) => {
-    const toolUseAssistant = makeLastAssistant({
-      stopReason: "toolUse",
-      content: [{ type: "toolCall", id: "tool_1", name: "exec", arguments: {} }],
-    });
-    const instruction = resolveSettledToolTerminalContinuationInstruction(
-      makeSettledContinuationParams({
-        assistantTexts: [],
-        toolMetas: [{ toolName: "exec", isError: true }],
-        itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
-        messagesSnapshot: [
-          toolUseAssistant,
-          { role: "toolResult", toolCallId: "tool_1", toolName: "exec", isError: true },
-        ] as unknown as EmbeddedRunAttemptResult["messagesSnapshot"],
-        lastAssistant: toolUseAssistant,
-        currentAttemptAssistant: toolUseAssistant,
-        lastToolError: { toolName: "exec", error: "post-processing error" },
-        ...attemptOverrides,
-      }),
-    );
+    {
+      label: "a final message was already delivered",
+      attemptOverrides: {
+        didSendViaMessagingTool: true,
+        messagingToolSentTexts: ["The task failed."],
+        messagingToolSentTargets: [
+          {
+            tool: "message",
+            provider: "discord",
+            to: "channel:123",
+            text: "The task failed.",
+            sourceReplyFinal: true,
+          },
+        ],
+      },
+      continuationOverrides: {},
+    },
+    {
+      label: "the run was aborted",
+      attemptOverrides: {},
+      continuationOverrides: { aborted: true },
+    },
+  ])(
+    "does not finalize a failed terminal tool when $label (#118274)",
+    ({ attemptOverrides, continuationOverrides }) => {
+      const toolUseAssistant = makeLastAssistant({
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "tool_1", name: "exec", arguments: {} }],
+      });
+      const instruction = resolveSettledToolTerminalContinuationInstruction(
+        makeSettledContinuationParams(
+          {
+            assistantTexts: [],
+            toolMetas: [
+              {
+                toolName: "exec",
+                toolCallId: "tool_1",
+                isError: true,
+                replaySafe: false,
+                terminate: true,
+              },
+            ],
+            itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
+            messagesSnapshot: [
+              toolUseAssistant,
+              { role: "toolResult", toolCallId: "tool_1", toolName: "exec", isError: true },
+            ] as unknown as EmbeddedRunAttemptResult["messagesSnapshot"],
+            lastAssistant: toolUseAssistant,
+            currentAttemptAssistant: toolUseAssistant,
+            lastToolError: { toolName: "exec", error: "post-processing error" },
+            ...attemptOverrides,
+          },
+          continuationOverrides,
+        ),
+      );
 
-    expect(instruction).toBeNull();
-  });
+      expect(instruction).toBeNull();
+    },
+  );
 
   it.each([
     { label: "background trigger", allowEmptyStopContinuation: false },
