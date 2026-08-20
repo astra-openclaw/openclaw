@@ -92,10 +92,14 @@ async function seedCompactionSession(params: {
 const transcriptReadError = () =>
   new Error("SQLITE_IOERR: failed to read session transcript storage");
 
+// Sticky rejections on purpose: a stray transcript read (background refresh on a
+// slow worker) must not consume a queued `Once` failure and let compaction read
+// the real store. beforeEach resets the mock, so nothing leaks across tests.
+
 test("sessions.compact reports initial transcript read failures as unavailable", async () => {
   const { storePath } = await createSessionStoreDir();
   await seedCompactionSession({ sessionId: "sess-read-failure", storePath });
-  transcriptReads.load.mockRejectedValueOnce(transcriptReadError());
+  transcriptReads.load.mockRejectedValue(transcriptReadError());
 
   const { ws } = await openClient();
   try {
@@ -119,7 +123,7 @@ test("sessions.compact reports model compaction transcript re-read failures as u
     nativeHarness: true,
   });
   const events = await (await actualTranscriptReader())(scope);
-  transcriptReads.load.mockResolvedValueOnce(events).mockRejectedValueOnce(transcriptReadError());
+  transcriptReads.load.mockRejectedValue(transcriptReadError()).mockResolvedValueOnce(events);
 
   const { ws } = await openClient();
   try {
@@ -138,7 +142,7 @@ test("sessions.compact reports model compaction transcript re-read failures as u
 test("sessions.compact maxLines reports transcript preflight read failures as unavailable", async () => {
   const { storePath } = await createSessionStoreDir();
   await seedCompactionSession({ sessionId: "sess-max-lines-read-failure", storePath });
-  transcriptReads.load.mockRejectedValueOnce(transcriptReadError());
+  transcriptReads.load.mockRejectedValue(transcriptReadError());
 
   const { ws } = await openClient();
   try {
